@@ -9,6 +9,9 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+import practice.test.Student;
+
+import java.util.List;
 
 @Configuration
 public class RedisConfig {
@@ -27,11 +30,12 @@ public class RedisConfig {
     }
 
     @Bean(name = "redisTemplate")
-    public RedisTemplate redisTemplate(RedisConnectionFactory factory) {
-        RedisTemplate redisTemplate = new RedisTemplate<>();
+    public RedisTemplate<String, List<Student>> redisTemplate(RedisConnectionFactory factory) {
+        RedisTemplate<String, List<Student>> redisTemplate = new RedisTemplate<>();
         redisTemplate.setConnectionFactory(factory);
         redisTemplate.setKeySerializer(new StringRedisSerializer());
-        redisTemplate.setValueSerializer(new Jackson2JsonRedisSerializer(Student.class));
+        redisTemplate.setValueSerializer(new Jackson2JsonRedisSerializer<>(List.class));
+        redisTemplate.afterPropertiesSet();
         return redisTemplate;
     }
 }
