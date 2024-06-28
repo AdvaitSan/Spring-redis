@@ -1,9 +1,11 @@
 package practice.test;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.api.StatefulRedisConnection;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.CachePut;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,49 +23,69 @@ public class StudentService {
     @Autowired
     private RedisTemplate<String, List<Student>> redisTemplate;
 
-    @Cacheable(value = "students", key = "'all'")
-    public List<Student> getAllStudents() {
+    RedisClient redisClient = RedisClient.create("redis://localhost/0");
+    StatefulRedisConnection<String, String> connection = redisClient.connect();
+    public Student[] getAllStudents() {
         try {
-            List<Student> cachedStudents = redisTemplate.opsForValue().get("students:all");
-            if (cachedStudents != null) {
-                return cachedStudents; // Return cached list if available
+            RedisClient redisClient = RedisClient.create("redis://localhost:6379");
+            StatefulRedisConnection<String, String> connection = redisClient.connect();
+            String cachedStudentsJson = connection.sync().get("students:all");
+            if (cachedStudentsJson != null) {
+                ObjectMapper mapper = new ObjectMapper();
+                Student[] cachedStudents = mapper.readValue(cachedStudentsJson, Student[].class);
+                return cachedStudents; // Return cached array if available
             }
 
             List<Student> students = studentRepository.findAll();
-            redisTemplate.opsForValue().set("students:all", students, 60, TimeUnit.SECONDS);
-            return students;
+            ObjectMapper mapper = new ObjectMapper();
+            String studentsJson = mapper.writeValueAsString(students);
+            connection.sync().set("students:all", studentsJson);
+            connection.sync().expire("students:all", 60); // Set TTL to 60 seconds
+            return students.toArray(new Student[0]); // Convert List to array
         } catch (Exception e) {
             throw new RuntimeException("Error retrieving students", e);
         }
     }
 
-    @Cacheable(value = "students", key = "#id")
     public Student getStudentById(Long id) {
+        ObjectMapper mapper = new ObjectMapper(); // Declare and initialize the ObjectMapper
         try {
-            Student cachedStudent = (Student) redisTemplate.opsForValue().get("student:" + id);
-            if (cachedStudent != null) {
-                return cachedStudent;
+            String studentJson = connection.sync().get("student:" + id);
+            if (studentJson != null) {
+                Student student = mapper.readValue(studentJson, Student.class);
+                return student;
+            } else {
+                // If not found in Redis, retrieve from database
+                Student student = studentRepository.findById(id).orElse(null);
+                if (student == null) {
+                    // If student ID does not exist, return null
+                    return null;
+                } else {
+                    String studentJsonString = mapper.writeValueAsString(student);
+                    connection.sync().set("student:" + id, studentJsonString);
+                    return student;
+                }
             }
-
-            Student student = studentRepository.findById(id).orElse(null);
-            if (student != null) {
-                redisTemplate.opsForValue().set("student:" + id, Collections.singletonList(student), 60, TimeUnit.SECONDS);
-            }
-            return student;
         } catch (Exception e) {
             throw new RuntimeException("Error retrieving student by ID", e);
         }
     }
 
     @Transactional
-    @CachePut(value = "students", key = "'all'")
     public Student createStudent(Student student) {
         try {
             Student savedStudent = studentRepository.save(student);
             // Update the cache entry for "students:all" to include the new student
             List<Student> students = studentRepository.findAll();
             students.add(savedStudent); // Add the new student to the list
-            redisTemplate.opsForValue().set("students:all", students, 60, TimeUnit.SECONDS);
+
+            ObjectMapper mapper = new ObjectMapper();
+            String studentJson = mapper.writeValueAsString(savedStudent);
+            connection.sync().set("student:"+savedStudent.getId(), studentJson);
+
+            String studentsJson = mapper.writeValueAsString(students);
+            connection.sync().set("students:all", studentsJson);
+
             return savedStudent; // Return the created student details
         } catch (Exception e) {
             throw new RuntimeException("Error creating student", e);
@@ -73,7 +95,6 @@ public class StudentService {
 
 
     @Transactional
-    @CachePut(value = "students", key = "#id")
     public Student updateStudent(Long id, Student student) {
         try {
             student.setId(id);
