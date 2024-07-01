@@ -11,8 +11,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Service
 public class StudentService {
@@ -23,11 +26,11 @@ public class StudentService {
     @Autowired
     private RedisTemplate<String, List<Student>> redisTemplate;
 
-    RedisClient redisClient = RedisClient.create("redis://localhost/0");
+    RedisClient redisClient = RedisClient.create("redis://localhost:6379");
     StatefulRedisConnection<String, String> connection = redisClient.connect();
+
     public Student[] getAllStudents() {
         try {
-            RedisClient redisClient = RedisClient.create("redis://localhost:6379");
             StatefulRedisConnection<String, String> connection = redisClient.connect();
             String cachedStudentsJson = connection.sync().get("students:all");
             if (cachedStudentsJson != null) {
@@ -86,13 +89,14 @@ public class StudentService {
             String studentsJson = mapper.writeValueAsString(students);
             connection.sync().set("students:all", studentsJson);
 
+            // Check and evict cache if size exceeds limit
+            evictIfCacheSizeExceeds();
+
             return savedStudent; // Return the created student details
         } catch (Exception e) {
             throw new RuntimeException("Error creating student", e);
         }
     }
-
-
 
     @Transactional
     public Student updateStudent(Long id, Student student) {
@@ -100,6 +104,10 @@ public class StudentService {
             student.setId(id);
             Student updatedStudent = studentRepository.save(student);
             redisTemplate.opsForValue().set("student:" + updatedStudent.getId(), Collections.singletonList(updatedStudent), 60, TimeUnit.SECONDS);
+
+            // Check and evict cache if size exceeds limit
+            evictIfCacheSizeExceeds();
+
             return updatedStudent;
         } catch (Exception e) {
             throw new RuntimeException("Error updating student", e);
@@ -115,6 +123,9 @@ public class StudentService {
             List<Student> students = studentRepository.findAll();
             redisTemplate.opsForValue().set("students:all", students, 60, TimeUnit.SECONDS);
             redisTemplate.delete("student:" + id);
+
+            // Check and evict cache if size exceeds limit
+            evictIfCacheSizeExceeds();
         } catch (Exception e) {
             throw new RuntimeException("Error deleting student", e);
         }
@@ -126,6 +137,29 @@ public class StudentService {
             // This method clears all cached students
         } catch (Exception e) {
             throw new RuntimeException("Error clearing cache", e);
+        }
+    }
+
+    private void evictIfCacheSizeExceeds() {
+        try {
+            long currentSize = redisClient.connect().sync().dbsize(); // Get current Redis DB size
+            long maxSize = 1000; // Maximum size threshold in bytes
+
+            if (currentSize > maxSize) {
+                // Implement LRU eviction strategy
+                ObjectMapper mapper = new ObjectMapper();
+                Map<String, String> allKeysWithTTL = redisClient.connect().sync().dump(); // Get all keys with TTL
+
+                List<String> keysToEvict = allKeysWithTTL.entrySet().stream()
+                        .sorted(Comparator.comparingLong(entry -> Long.parseLong(entry.getValue().substring(0, entry.getValue().indexOf(',')))))
+                        .limit(allKeysWithTTL.size() - 100)
+                        .map(Map.Entry::getKey)
+                        .collect(Collectors.toList());
+
+                connection.sync().del(keysToEvict.toArray(new String[0]));
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Error evicting cache based on size", e);
         }
     }
 }
