@@ -6,7 +6,9 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,26 +23,22 @@ public class StudentService {
     private StudentRepository studentRepository;
 
     @Autowired
-    private RedisTemplate<String, List<Student>> redisTemplate;
+    private RedisTemplate<String, String> template;
 
-    RedisClient redisClient = RedisClient.create("redis://localhost/0");
-    StatefulRedisConnection<String, String> connection = redisClient.connect();
+    private final ObjectMapper mapper = new ObjectMapper();
+
     public Student[] getAllStudents() {
         try {
-            RedisClient redisClient = RedisClient.create("redis://localhost:6379");
-            StatefulRedisConnection<String, String> connection = redisClient.connect();
-            String cachedStudentsJson = connection.sync().get("students:all");
+            String cachedStudentsJson = template.opsForValue().get("students:all");
             if (cachedStudentsJson != null) {
-                ObjectMapper mapper = new ObjectMapper();
                 Student[] cachedStudents = mapper.readValue(cachedStudentsJson, Student[].class);
                 return cachedStudents; // Return cached array if available
             }
 
             List<Student> students = studentRepository.findAll();
-            ObjectMapper mapper = new ObjectMapper();
             String studentsJson = mapper.writeValueAsString(students);
-            connection.sync().set("students:all", studentsJson);
-            connection.sync().expire("students:all", 60); // Set TTL to 60 seconds
+            template.opsForValue().set("students:all", studentsJson);
+            template.expire("students:all", 60, TimeUnit.SECONDS); // Set TTL to 60 seconds
             return students.toArray(new Student[0]); // Convert List to array
         } catch (Exception e) {
             throw new RuntimeException("Error retrieving students", e);
@@ -48,9 +46,8 @@ public class StudentService {
     }
 
     public Student getStudentById(Long id) {
-        ObjectMapper mapper = new ObjectMapper(); // Declare and initialize the ObjectMapper
         try {
-            String studentJson = connection.sync().get("student:" + id);
+            String studentJson = template.opsForValue().get("student:" + id);
             if (studentJson != null) {
                 Student student = mapper.readValue(studentJson, Student.class);
                 return student;
@@ -62,7 +59,7 @@ public class StudentService {
                     return null;
                 } else {
                     String studentJsonString = mapper.writeValueAsString(student);
-                    connection.sync().set("student:" + id, studentJsonString);
+                    template.opsForValue().set("student:" + id, studentJsonString);
                     return student;
                 }
             }
@@ -77,14 +74,21 @@ public class StudentService {
             Student savedStudent = studentRepository.save(student);
             // Update the cache entry for "students:all" to include the new student
             List<Student> students = studentRepository.findAll();
+            LettuceConnectionFactory connectionFactory = new LettuceConnectionFactory();
+            connectionFactory.afterPropertiesSet();
+
+            RedisTemplate<String, String> template = new RedisTemplate<>();
+            template.setConnectionFactory(connectionFactory);
+            template.setDefaultSerializer(StringRedisSerializer.UTF_8);
+            template.afterPropertiesSet();
+
             students.add(savedStudent); // Add the new student to the list
 
-            ObjectMapper mapper = new ObjectMapper();
             String studentJson = mapper.writeValueAsString(savedStudent);
-            connection.sync().set("student:"+savedStudent.getId(), studentJson);
+            template.opsForValue().set("student:" + savedStudent.getId(), studentJson);
 
             String studentsJson = mapper.writeValueAsString(students);
-            connection.sync().set("students:all", studentsJson);
+            template.opsForValue().set("students:all", studentsJson);
 
             return savedStudent; // Return the created student details
         } catch (Exception e) {
@@ -92,14 +96,12 @@ public class StudentService {
         }
     }
 
-
-
     @Transactional
     public Student updateStudent(Long id, Student student) {
         try {
             student.setId(id);
             Student updatedStudent = studentRepository.save(student);
-            redisTemplate.opsForValue().set("student:" + updatedStudent.getId(), Collections.singletonList(updatedStudent), 60, TimeUnit.SECONDS);
+            template.opsForValue().set("student:" + updatedStudent.getId(), mapper.writeValueAsString(updatedStudent), 60, TimeUnit.SECONDS);
             return updatedStudent;
         } catch (Exception e) {
             throw new RuntimeException("Error updating student", e);
@@ -113,8 +115,8 @@ public class StudentService {
             studentRepository.deleteById(id);
             // Fetch all students after deletion to ensure cache consistency
             List<Student> students = studentRepository.findAll();
-            redisTemplate.opsForValue().set("students:all", students, 60, TimeUnit.SECONDS);
-            redisTemplate.delete("student:" + id);
+            template.opsForValue().set("students:all", mapper.writeValueAsString(students), 60, TimeUnit.SECONDS);
+            template.delete("student:" + id);
         } catch (Exception e) {
             throw new RuntimeException("Error deleting student", e);
         }
@@ -124,6 +126,8 @@ public class StudentService {
     public void clearCache() {
         try {
             // This method clears all cached students
+            template.delete("students:all");
+            template.keys("student:*").forEach(key -> template.delete(key));
         } catch (Exception e) {
             throw new RuntimeException("Error clearing cache", e);
         }
