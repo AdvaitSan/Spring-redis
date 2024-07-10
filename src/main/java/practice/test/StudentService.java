@@ -5,10 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,7 +21,7 @@ public class StudentService {
 
     @Autowired
     private StudentRepository studentRepository;
-
+    @Qualifier("redisTemplate")
     @Autowired
     private RedisTemplate<String, String> template;
 
@@ -76,11 +76,11 @@ public class StudentService {
             List<Student> students = studentRepository.findAll();
             LettuceConnectionFactory connectionFactory = new LettuceConnectionFactory();
             connectionFactory.afterPropertiesSet();
-
-            RedisTemplate<String, String> template = new RedisTemplate<>();
-            template.setConnectionFactory(connectionFactory);
-            template.setDefaultSerializer(StringRedisSerializer.UTF_8);
-            template.afterPropertiesSet();
+//
+//            RedisTemplate<String, String> template = new RedisTemplate<>();
+//            template.setConnectionFactory(connectionFactory);
+//            template.setDefaultSerializer(StringRedisSerializer.UTF_8);
+//            template.afterPropertiesSet();
 
             students.add(savedStudent); // Add the new student to the list
 

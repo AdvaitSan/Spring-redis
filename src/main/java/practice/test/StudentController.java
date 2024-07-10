@@ -14,6 +14,10 @@ public class StudentController {
     public Student[] getAllStudents() {
         return studentService.getAllStudents();
     }
+//    @GetMapping
+//    public String getAllStudents() {
+//        return "server works";
+//    }
 
     @GetMapping("/{id}")
     public Student getStudentById(@PathVariable Long id) {
@@ -35,7 +39,7 @@ public class StudentController {
         studentService.deleteStudent(id);
     }
 
-    @GetMapping("/cache")
+    @GetMapping("/clear")
     public void clearCache() {
         studentService.clearCache();
     }

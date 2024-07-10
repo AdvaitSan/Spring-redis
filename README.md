@@ -2,7 +2,12 @@
 This is a Spring-based application that utilizes Redis as a caching layer to store key-value pairs, providing faster response times by reducing the load on the underlying database. 
 The application uses Lettuce as the Redis client and is built using Maven.
 
-### Student Service
+### cluster command
+docker exec -it redis1 redis-cli --cluster create redis1:6379 redis2:6379 redis3:6379 redis4:6379 redis5:6379 redis6:6379 --cluster-replicas 1 --cluster-yes
+### master connection:
+docker exec -it redis1 redis-cli -c 172.20.0.7:6379
+
+ Student Service
 ================
 
 #### Description
